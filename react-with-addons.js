@@ -5012,6 +5012,7 @@ var warning = _dereq_(171);
 // their node will be stuck in the DOM forever, so we detect if an animation
 // does not start and if it doesn't, we just call the end listener immediately.
 var TICK = 17;
+var NO_EVENT_TIMEOUT = 5000;
 
 var ReactCSSTransitionGroupChild = React.createClass({
   displayName: 'ReactCSSTransitionGroupChild',
@@ -5026,15 +5027,7 @@ var ReactCSSTransitionGroupChild = React.createClass({
     leaveTimeout: React.PropTypes.number
   },
 
-  getDefaultProps: function() {
-    return {
-      appearTimeout: 5000,
-      enterTimeout: 5000,
-      leaveTimeout: 5000
-    };
-  },
-
-  transition: function(animationType, finishCallback, noEventDelay) {
+  transition: function(animationType, finishCallback, userSpecifiedNoEventDelay) {
     var node = React.findDOMNode(this);
 
     if (!node) {
@@ -5044,16 +5037,17 @@ var ReactCSSTransitionGroupChild = React.createClass({
       return;
     }
 
-    var className = this.props.name + '-' + animationType;
-    var activeClassName = className + '-active';
-    var noEventTimeout = null;
+    var className = this.props.name[animationType] || this.props.name + '-' + animationType;
+    var activeClassName = this.props.name[animationType + 'Active'] || className + '-active';
+    var noEventCleanupTimeout = null, noEventWarningTimeout = null;
 
     var endListener = function(e) {
       if (e && e.target !== node) {
         return;
       }
 
-      clearTimeout(noEventTimeout);
+      clearTimeout(noEventCleanupTimeout);
+      clearTimeout(noEventWarningTimeout);
 
       CSSCore.removeClass(node, className);
       CSSCore.removeClass(node, activeClassName);
@@ -5074,25 +5068,29 @@ var ReactCSSTransitionGroupChild = React.createClass({
     // Need to do this to actually trigger a transition.
     this.queueClass(activeClassName);
 
-    // 'transitionend' events are unreliable - we always need a timeout
-    // to clean-up any events that the browser forgot about.
-    noEventTimeout = setTimeout(
-      function() {
-        ("production" !== "development" ? warning(
-          false,
-          'transition(): tried to perform an animation without ' +
-          'an animationend or transitionend event after timeout (' +
-          '%sms). You should either disable this ' +
-          'transition in JS, add a CSS animation/transition or ' +
-          'specify a larger timeout.',
-          noEventDelay
-        ) : null);
+    // If the user specified a timeout delay
+    if (typeof userSpecifiedNoEventDelay === 'number') {
+      // Clean-up as-if the animation had finished properly after that delay
+      noEventCleanupTimeout = setTimeout(endListener, userSpecifiedNoEventDelay);
 
-        // Clean-up as-if the animation had finished properly
-        endListener();
-      },
-      noEventDelay
-    );
+    } else {
+      // The user hasn't specified a timeout, so they probably don't know about the
+      // unreliability of transitionend events - warn them if the transitionend event never happens
+      noEventWarningTimeout = setTimeout(
+        function() {
+          ("production" !== "development" ? warning(
+            false,
+            'transition(): tried to perform an animation without ' +
+            'an animationend or transitionend event after (' +
+            '%sms). You should either disable this ' +
+            'transition in JS, add a CSS animation/transition or ' +
+            'specify a timeout for your animation.',
+            NO_EVENT_TIMEOUT
+          ) : null);
+        },
+        NO_EVENT_TIMEOUT
+      );
+    }
   },
 
   queueClass: function(className) {
